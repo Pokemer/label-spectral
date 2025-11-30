@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh">
+  <head>
+    <meta charset="UTF-8" />
+    <title>高光谱数据集制作工具</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+      body {
+        font-family: "Segoe UI", sans-serif;
+        display: flex;
+        height: 100vh;
+        margin: 0;
+        background: #f0f2f5;
+      }
+      #sidebar {
+        width: 300px;
+        background: #fff;
+        border-right: 1px solid #ddd;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+      #file-list {
+        overflow-y: auto;
+        flex: 1;
+      }
+      .file-item {
+        padding: 8px 12px;
+        cursor: pointer;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 13px;
+        word-break: break-all;
+      }
+      .file-item:hover {
+        background: #e6f7ff;
+      }
+      .file-item.active {
+        background: #1890ff;
+        color: white;
+      }
+      #main {
+        flex: 1;
+        display: flex;
+        flex-direction: row;
+        padding: 20px;
+        gap: 20px;
+      }
+      .panel {
+        background: #fff;
+        padding: 20px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      }
+      #image-container {
+        flex: 1;
+        overflow: auto;
+        display: flex;
+        justify-content: center;
+        align-items: start;
+        background-color: #333;
+      }
+      #hsi-image {
+        cursor: crosshair;
+        max-width: 100%;
+        display: block;
+      }
+      #data-panel {
+        width: 400px;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+      }
+      input,
+      button {
+        padding: 10px;
+        width: 100%;
+        box-sizing: border-box;
+        margin-bottom: 10px;
+      }
+      button {
+        background: #1890ff;
+        color: white;
+        border: none;
+        cursor: pointer;
+        font-weight: bold;
+      }
+      button:hover {
+        background: #40a9ff;
+      }
+      #info-box {
+        font-size: 14px;
+        color: #666;
+        background: #f9f9f9;
+        padding: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="sidebar">
+      <h3>文件列表</h3>
+      <div id="file-list">加载中...</div>
+    </div>
+
+    <div id="main">
+      <div id="image-container" class="panel">
+        <img id="hsi-image" src="" alt="请选择文件" style="display: none" />
+      </div>
+
+      <div id="data-panel" class="panel">
+        <h3>光谱信息</h3>
+        <div id="info-box">请点击图片上的点</div>
+        <canvas id="spectrumChart"></canvas>
+
+        <hr />
+        <h3>标注保存</h3>
+        <input
+          type="text"
+          id="label-input"
+          placeholder="输入聚合物类别 (例如: pp，ps，pe...)"
+        />
+        <button onclick="saveData()">保存至数据集</button>
+        <div id="status-msg" style="color: green"></div>
+      </div>
+    </div>
+
+    <script>
+      let currentFile = "";
+      let currentX = 0;
+      let currentY = 0;
+      let currentSpectrum = [];
+      let currentWavelengths = []; // 1. 暂存波长
+      let chartInstance = null;
+
+      // 获取文件列表
+      fetch("/api/files")
+        .then((res) => res.json())
+        .then((data) => {
+          const list = document.getElementById("file-list");
+          list.innerHTML = "";
+          if (data.error) {
+            list.innerHTML = `<div style="color:red">Error: ${data.error}</div>`;
+            return;
+          }
+          data.files.forEach((f) => {
+            const div = document.createElement("div");
+            div.className = "file-item";
+            div.innerText = f;
+            div.onclick = () => loadFile(f, div);
+            list.appendChild(div);
+          });
+        });
+
+      function loadFile(filepath, element) {
+        currentFile = filepath;
+        document
+          .querySelectorAll(".file-item")
+          .forEach((e) => e.classList.remove("active"));
+        element.classList.add("active");
+        const img = document.getElementById("hsi-image");
+        img.src = `/api/image?filepath=${encodeURIComponent(filepath)}`;
+        img.style.display = "block";
+        img.onload = () => {
+          document.getElementById("status-msg").innerText = "图片已加载";
+          if (chartInstance) {
+            chartInstance.data.datasets[0].data = [];
+            chartInstance.update();
+          }
+        };
+      }
+
+      document
+        .getElementById("hsi-image")
+        .addEventListener("click", function (e) {
+          if (!currentFile) return;
+          const rect = e.target.getBoundingClientRect();
+          const scaleX = e.target.naturalWidth / e.target.width;
+          const scaleY = e.target.naturalHeight / e.target.height;
+          currentX = Math.floor((e.clientX - rect.left) * scaleX);
+          currentY = Math.floor((e.clientY - rect.top) * scaleY);
+          document.getElementById("info-box").innerText = `读取中...`;
+
+          fetch(
+            `/api/spectrum?filepath=${encodeURIComponent(
+              currentFile
+            )}&x=${currentX}&y=${currentY}`
+          )
+            .then((res) => res.json())
+            .then((data) => {
+              currentSpectrum = data.spectrum;
+              currentWavelengths = data.wavelengths; // 2. 保存获取到的波长
+              drawChart(data.wavelengths, data.spectrum);
+              document.getElementById(
+                "info-box"
+              ).innerText = `选中: ${currentFile}\n坐标: ${currentX}, ${currentY}`;
+            });
+        });
+
+      function drawChart(labels, data) {
+        const ctx = document.getElementById("spectrumChart").getContext("2d");
+        if (chartInstance) chartInstance.destroy();
+        chartInstance = new Chart(ctx, {
+          type: "line",
+          data: {
+            labels: labels,
+            datasets: [
+              {
+                label: "光谱强度",
+                data: data,
+                borderColor: "rgb(255, 99, 132)",
+                borderWidth: 1,
+                pointRadius: 0,
+                fill: false,
+                tension: 0.1,
+              },
+            ],
+          },
+          options: {
+            responsive: true,
+            animation: false,
+            scales: { x: { ticks: { maxTicksLimit: 6 } } },
+          },
+        });
+      }
+
+      // 5. 保存数据
+      function saveData() {
+        const label = document.getElementById("label-input").value;
+        if (!label) {
+          alert("请输入标签名称！");
+          return;
+        }
+        if (currentSpectrum.length === 0) {
+          alert("请先选择一个点！");
+          return;
+        }
+
+        const payload = {
+          filename: currentFile,
+          x: currentX,
+          y: currentY,
+          label: label,
+          spectrum: currentSpectrum,
+          wavelengths: currentWavelengths,
+        };
+
+        const statusBox = document.getElementById("status-msg"); // 获取状态栏元素
+
+        fetch("/api/save", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        })
+          .then((res) => res.json())
+          .then((res) => {
+            // 1. 显示成功信息
+            statusBox.innerText = `保存成功: ${label}`;
+            statusBox.style.color = "green";
+
+            // 2. 清空输入框 (可选，方便下一次输入，不需要的话可以删掉这行)
+            // document.getElementById('label-input').value = '';
+
+            // 3. 设置定时器：2秒后自动消失
+            setTimeout(() => {
+              statusBox.innerText = "";
+            }, 2000);
+          })
+          .catch((err) => {
+            statusBox.innerText = "保存失败";
+            statusBox.style.color = "red";
+
+            // 失败信息也设个定时器自动消失
+            setTimeout(() => {
+              statusBox.innerText = "";
+            }, 3000);
+          });
+      }
+    </script>
+  </body>
+</html>
