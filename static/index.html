@@ -3,8 +3,10 @@
   <head>
     <meta charset="UTF-8" />
     <title>高光谱数据集制作工具</title>
+    <!-- 引入 Chart.js 用于绘制光谱曲线 -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
+      /* 页面整体布局：左侧文件列表 + 右侧主工作区 */
       body {
         font-family: "Segoe UI", sans-serif;
         display: flex;
@@ -12,6 +14,8 @@
         margin: 0;
         background: #f0f2f5;
       }
+
+      /* 左侧侧边栏：固定宽度，包含文件列表 */
       #sidebar {
         width: 300px;
         background: #fff;
@@ -20,10 +24,14 @@
         display: flex;
         flex-direction: column;
       }
+
+      /* 文件列表区域：可滚动 */
       #file-list {
         overflow-y: auto;
         flex: 1;
       }
+
+      /* 单个文件项样式 */
       .file-item {
         padding: 8px 12px;
         cursor: pointer;
@@ -31,13 +39,17 @@
         font-size: 13px;
         word-break: break-all;
       }
+
       .file-item:hover {
         background: #e6f7ff;
       }
+
       .file-item.active {
         background: #1890ff;
         color: white;
       }
+
+      /* 主工作区：包含图像预览和数据面板 */
       #main {
         flex: 1;
         display: flex;
@@ -45,12 +57,16 @@
         padding: 20px;
         gap: 20px;
       }
+
+      /* 通用面板样式（卡片式） */
       .panel {
         background: #fff;
         padding: 20px;
         border-radius: 8px;
         box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
       }
+
+      /* 图像容器：居中显示，深色背景便于查看亮色图像 */
       #image-container {
         flex: 1;
         overflow: auto;
@@ -59,17 +75,23 @@
         align-items: start;
         background-color: #333;
       }
+
+      /* 高光谱预览图：可点击，限制最大宽度 */
       #hsi-image {
         cursor: crosshair;
         max-width: 100%;
         display: block;
       }
+
+      /* 右侧面板：固定宽度，包含光谱图和标注表单 */
       #data-panel {
         width: 400px;
         display: flex;
         flex-direction: column;
         gap: 15px;
       }
+
+      /* 表单控件统一样式 */
       input,
       button {
         padding: 10px;
@@ -77,6 +99,7 @@
         box-sizing: border-box;
         margin-bottom: 10px;
       }
+
       button {
         background: #1890ff;
         color: white;
@@ -84,9 +107,12 @@
         cursor: pointer;
         font-weight: bold;
       }
+
       button:hover {
         background: #40a9ff;
       }
+
+      /* 信息提示框 */
       #info-box {
         font-size: 14px;
         color: #666;
@@ -96,16 +122,20 @@
     </style>
   </head>
   <body>
+    <!-- 左侧文件列表区域 -->
     <div id="sidebar">
       <h3>文件列表</h3>
       <div id="file-list">加载中...</div>
     </div>
 
+    <!-- 主工作区 -->
     <div id="main">
+      <!-- 高光谱图像预览 -->
       <div id="image-container" class="panel">
         <img id="hsi-image" src="" alt="请选择文件" style="display: none" />
       </div>
 
+      <!-- 右侧数据与标注面板 -->
       <div id="data-panel" class="panel">
         <h3>光谱信息</h3>
         <div id="info-box">请点击图片上的点</div>
@@ -124,14 +154,15 @@
     </div>
 
     <script>
-      let currentFile = "";
-      let currentX = 0;
-      let currentY = 0;
-      let currentSpectrum = [];
-      let currentWavelengths = []; // 1. 暂存波长
-      let chartInstance = null;
+      // ========== 全局状态变量 ==========
+      let currentFile = ""; // 当前选中的高光谱文件路径
+      let currentX = 0,
+        currentY = 0; // 当前点击的像素坐标
+      let currentSpectrum = []; // 当前光谱数据（强度值）
+      let currentWavelengths = []; // 对应的波长值（用于保存和绘图）
+      let chartInstance = null; // Chart.js 实例，用于更新光谱图
 
-      // 获取文件列表
+      // ========== 初始化：加载文件列表 ==========
       fetch("/api/files")
         .then((res) => res.json())
         .then((data) => {
@@ -141,26 +172,35 @@
             list.innerHTML = `<div style="color:red">Error: ${data.error}</div>`;
             return;
           }
-          data.files.forEach((f) => {
-            const div = document.createElement("div");
-            div.className = "file-item";
-            div.innerText = f;
-            div.onclick = () => loadFile(f, div);
-            list.appendChild(div);
+          // 动态生成文件项，并绑定点击事件
+          data.files.forEach((filePath) => {
+            const item = document.createElement("div");
+            item.className = "file-item";
+            item.innerText = filePath;
+            item.onclick = () => loadFile(filePath, item);
+            list.appendChild(item);
           });
         });
 
-      function loadFile(filepath, element) {
-        currentFile = filepath;
+      // ========== 加载高光谱文件的预览图 ==========
+      function loadFile(filePath, element) {
+        currentFile = filePath;
+        // 更新文件列表高亮状态
         document
           .querySelectorAll(".file-item")
           .forEach((e) => e.classList.remove("active"));
         element.classList.add("active");
+        // 请求并显示伪彩色预览图
         const img = document.getElementById("hsi-image");
-        img.src = `/api/image?filepath=${encodeURIComponent(filepath)}`;
+        img.src = `/api/image?filepath=${encodeURIComponent(filePath)}`;
         img.style.display = "block";
         img.onload = () => {
-          document.getElementById("status-msg").innerText = "图片已加载";
+          const statusBox = document.getElementById("status-msg");
+          statusBox.innerText = "图片已加载";
+          setTimeout(() => {
+            statusBox.innerText = "";
+          }, 1000);
+          // 清空之前的光谱图
           if (chartInstance) {
             chartInstance.data.datasets[0].data = [];
             chartInstance.update();
@@ -168,17 +208,22 @@
         };
       }
 
+      // ========== 图像点击事件：获取光谱 ==========
       document
         .getElementById("hsi-image")
         .addEventListener("click", function (e) {
           if (!currentFile) return;
+
+          // 计算点击位置在原始图像中的真实坐标
           const rect = e.target.getBoundingClientRect();
           const scaleX = e.target.naturalWidth / e.target.width;
           const scaleY = e.target.naturalHeight / e.target.height;
           currentX = Math.floor((e.clientX - rect.left) * scaleX);
           currentY = Math.floor((e.clientY - rect.top) * scaleY);
+
           document.getElementById("info-box").innerText = `读取中...`;
 
+          // 向后端请求该坐标的光谱数据
           fetch(
             `/api/spectrum?filepath=${encodeURIComponent(
               currentFile
@@ -187,7 +232,7 @@
             .then((res) => res.json())
             .then((data) => {
               currentSpectrum = data.spectrum;
-              currentWavelengths = data.wavelengths; // 2. 保存获取到的波长
+              currentWavelengths = data.wavelengths;
               drawChart(data.wavelengths, data.spectrum);
               document.getElementById(
                 "info-box"
@@ -195,36 +240,43 @@
             });
         });
 
-      function drawChart(labels, data) {
+      // ========== 绘制光谱曲线 ==========
+      function drawChart(wavelengths, spectrum) {
         const ctx = document.getElementById("spectrumChart").getContext("2d");
+        // 销毁旧图表（避免内存泄漏）
         if (chartInstance) chartInstance.destroy();
         chartInstance = new Chart(ctx, {
           type: "line",
           data: {
-            labels: labels,
+            labels: wavelengths, // X 轴：波长
             datasets: [
               {
                 label: "光谱强度",
-                data: data,
+                data: spectrum, // Y 轴：强度值
                 borderColor: "rgb(255, 99, 132)",
                 borderWidth: 1,
-                pointRadius: 0,
+                pointRadius: 0, // 不显示数据点，提升性能
                 fill: false,
-                tension: 0.1,
+                tension: 0.1, // 平滑曲线
               },
             ],
           },
           options: {
             responsive: true,
-            animation: false,
-            scales: { x: { ticks: { maxTicksLimit: 6 } } },
+            animation: false, // 关闭动画，提升交互响应速度
+            scales: {
+              x: { ticks: { maxTicksLimit: 6 } }, // 限制 X 轴标签数量
+            },
           },
         });
       }
 
-      // 5. 保存数据
+      // ========== 保存标注数据 ==========
       function saveData() {
-        const label = document.getElementById("label-input").value;
+        const label = document.getElementById("label-input").value.trim();
+        const statusBox = document.getElementById("status-msg");
+
+        // 输入校验
         if (!label) {
           alert("请输入标签名称！");
           return;
@@ -234,6 +286,7 @@
           return;
         }
 
+        // 构造标注数据（包含波长信息）
         const payload = {
           filename: currentFile,
           x: currentX,
@@ -243,8 +296,7 @@
           wavelengths: currentWavelengths,
         };
 
-        const statusBox = document.getElementById("status-msg"); // 获取状态栏元素
-
+        // 发送保存请求
         fetch("/api/save", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -252,23 +304,17 @@
         })
           .then((res) => res.json())
           .then((res) => {
-            // 1. 显示成功信息
+            // 显示成功提示，2秒后自动清除
             statusBox.innerText = `保存成功: ${label}`;
             statusBox.style.color = "green";
-
-            // 2. 清空输入框 (可选，方便下一次输入，不需要的话可以删掉这行)
-            // document.getElementById('label-input').value = '';
-
-            // 3. 设置定时器：2秒后自动消失
             setTimeout(() => {
               statusBox.innerText = "";
-            }, 2000);
+            }, 1000);
           })
           .catch((err) => {
+            // 显示失败提示，3秒后自动清除
             statusBox.innerText = "保存失败";
             statusBox.style.color = "red";
-
-            // 失败信息也设个定时器自动消失
             setTimeout(() => {
               statusBox.innerText = "";
             }, 3000);
